@@ -1,0 +1,8 @@
+{
+  "name": "Aspire Studios - Photo Studio Management",
+  "description": "A premium, minimal CRM for photography studios with AI-powered proposals, insights, and automated client communication.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
