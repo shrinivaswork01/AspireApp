@@ -119,33 +119,51 @@ const App: React.FC = () => {
   useEffect(() => {
     let mounted = true;
 
-    // Safety timeout: increased to 20s for slow connections but still forces resolution
+    // Safety timeout: 20s to prevent stuck loaders
     const timeout = setTimeout(() => {
       if (mounted && loading) {
-        console.warn("Initialization reached safety timeout. Attempting to force resolve...");
+        console.warn("Safety timeout reached. Forcing loading state to end.");
         setLoading(false);
       }
     }, 20000);
 
-    // Use onAuthStateChange for initial session AND updates
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
-      console.log("Auth event:", event);
+    // Initial check + Listener setup
+    const initializeAuth = async () => {
+      const { data: { session: initialSession } } = await supabase.auth.getSession();
+      
       if (!mounted) return;
 
-      setSession(currentSession);
-      if (currentSession?.user) {
-        setLoading(true);
-        await checkRoleAndInit(currentSession.user.id);
+      if (initialSession) {
+        setSession(initialSession);
+        await checkRoleAndInit(initialSession.user.id);
       } else {
-        setIsSuperAdmin(false);
         setLoading(false);
       }
-    });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+        if (!mounted) return;
+        
+        console.log("Auth event:", event);
+        setSession(currentSession);
+        
+        if (currentSession?.user) {
+          setLoading(true);
+          await checkRoleAndInit(currentSession.user.id);
+        } else {
+          setIsSuperAdmin(false);
+          setLoading(false);
+        }
+      });
+
+      return subscription;
+    };
+
+    const authSub = initializeAuth();
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
       clearTimeout(timeout);
+      authSub.then(sub => sub?.unsubscribe());
     };
   }, [checkRoleAndInit]);
 

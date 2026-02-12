@@ -1,13 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const getEnv = (key: string, fallback: string = "") => {
-  if (typeof window !== 'undefined' && (window as any).process?.env) {
-    return (window as any).process.env[key] || fallback;
-  }
-  return fallback;
+const getAI = () => {
+  // Directly use process.env.API_KEY as per instructions
+  const apiKey = process.env.API_KEY || (window as any).process?.env?.API_KEY || "";
+  return new GoogleGenAI({ apiKey });
 };
-
-const getAI = () => new GoogleGenAI({ apiKey: getEnv('API_KEY') });
 
 export const generateProposal = async (clientName: string, eventType: string, packageName: string, price: number) => {
   const ai = getAI();
