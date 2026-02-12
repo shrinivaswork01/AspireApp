@@ -1,16 +1,16 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
-import { Layout } from './components/Layout';
-import { Dashboard } from './components/Dashboard';
-import { AIStudio } from './components/AIStudio';
-import { Auth } from './components/Auth';
-import { supabase } from './services/supabaseClient';
+import { Layout } from './components/Layout.tsx';
+import { Dashboard } from './components/Dashboard.tsx';
+import { AIStudio } from './components/AIStudio.tsx';
+import { Auth } from './components/Auth.tsx';
+import { supabase } from './services/supabaseClient.ts';
 import { 
   X, 
   Loader2,
   AlertCircle,
   Check,
-  Calendar
+  Calendar,
+  RefreshCcw
 } from 'lucide-react';
 import { 
   Client, 
@@ -22,10 +22,8 @@ import {
   Package, 
   Employee, 
   UserRole 
-} from './types';
+} from './types.ts';
 
-// Component: Modal
-// Re-defining the Modal component with proper return values to fix potential void return errors.
 const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }> = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
@@ -43,8 +41,6 @@ const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; chi
   );
 };
 
-// Main App Component
-// Ensuring the component is typed as React.FC and returns valid JSX to fix the "void" return type error.
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -53,23 +49,21 @@ const App: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Data State
   const [clients, setClients] = useState<Client[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
 
-  // Modals State
   const [isClientModalOpen, setClientModalOpen] = useState(false);
   const [isBookingModalOpen, setBookingModalOpen] = useState(false);
   
-  // Editing state
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
 
   const fetchAllData = useCallback(async () => {
     try {
+      console.log("Fetching studio data...");
       const [cRes, bRes, pRes, tRes, eRes] = await Promise.allSettled([
         supabase.from('clients').select('*').order('created_at', { ascending: false }),
         supabase.from('bookings').select('*').order('created_at', { ascending: false }),
@@ -85,6 +79,7 @@ const App: React.FC = () => {
       setPackages(getVal(pRes) || []);
       setTasks(getVal(tRes) || []);
       setEmployees(getVal(eRes) || []);
+      console.log("Data sync complete.");
     } catch (err) {
       console.error("Data fetch error:", err);
     }
@@ -92,50 +87,66 @@ const App: React.FC = () => {
 
   const checkRoleAndInit = useCallback(async (userId: string) => {
     try {
-      const { data } = await supabase
+      console.log("Checking user role for:", userId);
+      const { data, error: roleError } = await supabase
         .from('employees')
         .select('role')
         .eq('user_id', userId)
         .maybeSingle();
 
+      if (roleError) console.warn("Role check error:", roleError);
+
       if (data) {
         setIsSuperAdmin(data.role === UserRole.SUPER_ADMIN);
       } else {
-        const { count } = await supabase.from('employees').select('*', { count: 'exact', head: true });
-        if (count === 0) setIsSuperAdmin(true);
-        else setIsSuperAdmin(false);
+        const { count, error: countError } = await supabase.from('employees').select('*', { count: 'exact', head: true });
+        if (!countError && count === 0) {
+          console.log("First user detected, granting Super Admin");
+          setIsSuperAdmin(true);
+        } else {
+          setIsSuperAdmin(false);
+        }
       }
       await fetchAllData();
     } catch (e) {
       console.error("Initialization error:", e);
-      setError("Sync problem detected. Please refresh.");
+      setError("Synchronization issue. Please check your connection.");
     } finally {
       setLoading(false);
     }
   }, [fetchAllData]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      setSession(initialSession);
-      if (initialSession?.user) {
-        checkRoleAndInit(initialSession.user.id);
-      } else {
+    let mounted = true;
+
+    // Safety timeout: increased to 20s for slow connections but still forces resolution
+    const timeout = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Initialization reached safety timeout. Attempting to force resolve...");
         setLoading(false);
       }
-    });
+    }, 20000);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
-      if (newSession?.user) {
+    // Use onAuthStateChange for initial session AND updates
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      console.log("Auth event:", event);
+      if (!mounted) return;
+
+      setSession(currentSession);
+      if (currentSession?.user) {
         setLoading(true);
-        await checkRoleAndInit(newSession.user.id);
+        await checkRoleAndInit(currentSession.user.id);
       } else {
         setIsSuperAdmin(false);
         setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+      clearTimeout(timeout);
+    };
   }, [checkRoleAndInit]);
 
   const handleLogout = async () => {
@@ -177,19 +188,14 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSaveBooking = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setSubmitting(true);
-    // Logic for saving/updating bookings
-    setBookingModalOpen(false);
-    setSubmitting(false);
-    await fetchAllData();
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-indigo-600" size={40} />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
+        <Loader2 className="animate-spin text-indigo-600 mb-6" size={48} strokeWidth={3} />
+        <h2 className="text-slate-900 font-black text-xl mb-2 tracking-tight">Syncing Studio Data</h2>
+        <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] max-w-xs leading-loose">
+          Securely connecting to your photographic database...
+        </p>
       </div>
     );
   }
@@ -220,7 +226,6 @@ const App: React.FC = () => {
       )}
       {activeTab === 'ai' && <AIStudio />}
       
-      {/* Tab content placeholder for routes not explicitly detailed in snippets */}
       {!['dashboard', 'ai'].includes(activeTab) && (
         <div className="flex flex-col items-center justify-center h-full text-slate-400 min-h-[400px]">
           <Calendar size={48} className="mb-4 opacity-20" />
@@ -229,7 +234,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Client Management Modal */}
       <Modal 
         isOpen={isClientModalOpen} 
         onClose={() => { setClientModalOpen(false); setEditingClient(null); }} 
@@ -250,7 +254,6 @@ const App: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Booking Management Modal */}
       <Modal 
         isOpen={isBookingModalOpen} 
         onClose={() => setBookingModalOpen(false)} 
@@ -262,10 +265,16 @@ const App: React.FC = () => {
       </Modal>
 
       {error && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-rose-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 shadow-xl animate-in slide-in-from-bottom-2">
-          <AlertCircle size={18} />
-          <span className="text-xs font-bold">{error}</span>
-          <button onClick={() => setError(null)} className="ml-2 hover:opacity-70"><X size={14} /></button>
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-rose-600 text-white px-6 py-4 rounded-[2rem] flex items-center gap-4 shadow-2xl animate-in slide-in-from-bottom-2 z-50 border border-rose-500/50">
+          <AlertCircle size={24} className="shrink-0" />
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest leading-none mb-1">System Notice</p>
+            <p className="text-xs font-bold opacity-90">{error}</p>
+          </div>
+          <button onClick={() => window.location.reload()} className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors">
+            <RefreshCcw size={16} />
+          </button>
+          <button onClick={() => setError(null)} className="ml-2 hover:opacity-70"><X size={18} /></button>
         </div>
       )}
     </Layout>
